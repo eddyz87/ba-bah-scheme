@@ -2,74 +2,16 @@
 #include <stdlib.h>
 #include <editline/readline.h>
 #include <stdarg.h>
+#include <search.h>
+
 #include "mpc/mpc.h"
 
 #define DEF_PARSER(name) mpc_parser_t* name = mpc_new( #name )
-/*
-#define IPRINTF(level, fmt_string, ...)               \
-  printf ("%*s" fmt_string, (level), "", __VA_ARGS__)
-*/
 #define ERROR(fmt, ...) error(__FILE__, __LINE__, (fmt), ##__VA_ARGS__)
 #define ASSERT(cond, fmt, ...)                \
   do {                                        \
     if (!(cond)) { ERROR(fmt, ##__VA_ARGS__); } \
   } while(0)
-
-enum {
-  FIXNUM_TAG = 0x0,
-  ERROR_TAG = 0x1,
-};
-
-enum {
-  ERR_DIV_BY_ZERO,
-  ERR_BAD_OP,
-  ERR_RANGE,
-};
-
-typedef struct {
-  int tag:2;
-  union {
-    long fixnum:62;
-    long err_code:62;
-  } value;
-} LispValue;
-
-LispValue make_fixnum(long val) {
-  LispValue lv;
-  lv.tag = FIXNUM_TAG;
-  lv.value.fixnum = val;
-  return lv;
-}
-
-LispValue make_error(long code) {
-  LispValue lv;
-  lv.tag = ERROR_TAG;
-  lv.value.err_code = code;
-  return lv;
-}
-
-int check_tag(LispValue lv, int tag) {
-  return lv.tag == tag;
-}
-
-int is_error(LispValue lv) {
-  return check_tag(lv, ERROR_TAG);
-}
-
-void print_lisp_value(LispValue lv) {
-  switch (lv.tag) {
-  case FIXNUM_TAG:
-    printf("%li\n", (long)lv.value.fixnum);
-    break;
-  case ERROR_TAG:
-    switch (lv.value.err_code) {
-    case ERR_BAD_OP: printf("Bad operation\n"); break;
-    case ERR_DIV_BY_ZERO: printf("Division by zero\n"); break;
-    case ERR_RANGE: printf("Value out of range\n"); break;
-    }
-    break;
-  }
-}
 
 void error(char *file, int line, char *fmt, ...) {
   fprintf(stderr, "Error at %s:%d : ", file, line);
@@ -80,68 +22,250 @@ void error(char *file, int line, char *fmt, ...) {
   exit(1);
 }
 
-LispValue eval_op(char* op, LispValue x, LispValue y) {
-  ASSERT(op, "op is null");
+static char* err_out_of_range = "Value out of range";
+//static char* err_division_by_zero = "Division by zero";
+static char* err_unknown_function = "Unknown function";
+static char* err_malformed_sexpr = "Malformed s-expression";
+static char* err_func_is_not_a_symbol = "Function being called is not a symbol";
+static char* err_bad_arguments = "Bad arguemnts";
+
+enum {
+  FIXNUM_TAG  = 0x0,
+  ERROR_TAG   = 0x1,
+  CONS_TAG    = 0x2,
+  SYMBOL_TAG  = 0x3,
+};
+
+struct _Cons;
+
+typedef struct {
+  unsigned int tag:2;
+  union {
+    long fixnum;
+    char* error;
+    char* symbol;
+    struct _Cons *cons;
+  } value;
+} LispValue;
+
+typedef struct _Cons {
+  LispValue car;
+  LispValue cdr;
+} Cons;
+
+LispValue make_fixnum(long val) {
+  LispValue lv;
+  lv.tag = FIXNUM_TAG;
+  lv.value.fixnum = val;
+  return lv;
+}
+
+LispValue make_error(char *desc) {
+  LispValue lv;
+  lv.tag = ERROR_TAG;
+  lv.value.error = desc;
+  return lv;
+}
+
+LispValue make_symbol(char *name) {
+  LispValue lv;
+  lv.tag = SYMBOL_TAG;
+  lv.value.symbol = name;
+  return lv;
+}
+
+LispValue make_cons(LispValue car, LispValue cdr) {
+  LispValue lv;
+  lv.tag = CONS_TAG;
+  lv.value.cons = malloc(sizeof(Cons));
+  lv.value.cons->car = car;
+  lv.value.cons->cdr = cdr;
+  return lv;
+}
+
+LispValue make_null() {
+  LispValue lv;
+  lv.tag = CONS_TAG;
+  lv.value.cons = NULL;
+  return lv;
+}
+
+int check_tag(LispValue lv, int tag) {
+  return lv.tag == tag;
+}
+
+
+#define DEF_TAG_CHECK(func, tag) \
+  int func(LispValue lv) {       \
+    return check_tag(lv, (tag)); \
+  }
+
+DEF_TAG_CHECK(is_error  , ERROR_TAG)
+DEF_TAG_CHECK(is_fixnum , FIXNUM_TAG)
+DEF_TAG_CHECK(is_cons   , CONS_TAG)
+DEF_TAG_CHECK(is_symbol , SYMBOL_TAG)
+
+int is_null(LispValue lv) {
+  return is_cons(lv) && !lv.value.cons;
+}
+
+void clean_lisp_value(LispValue lv) {
+  if (is_cons(lv)) {
+    Cons *cons = lv.value.cons;
+    if (cons) {
+      clean_lisp_value(cons->car);
+      clean_lisp_value(cons->cdr);
+      free(cons);
+    }
+  }
+}
+
+void print_lisp_value(LispValue lv) {
+  switch (lv.tag) {
+  case FIXNUM_TAG:
+    printf("%li", (long)lv.value.fixnum);
+    break;
+  case ERROR_TAG:
+    printf("%s", lv.value.error);
+    break;
+  case SYMBOL_TAG:
+    printf("%s", lv.value.symbol);
+    break;
+  case CONS_TAG: {
+    Cons *cons = lv.value.cons;
+    if (cons) {
+      printf("(");
+      print_lisp_value(cons->car);
+      printf(" . ");
+      print_lisp_value(cons->cdr);
+      printf(")");
+    } else {
+      printf("Nil");
+    }
+    break;
+  }
+  }
+}
+
+#define MAX_FUNCTIONS 1000
+
+typedef LispValue (*LispFunction) (LispValue);
+static struct hsearch_data functions_table;
+
+LispValue eval(LispValue lv);
+
+LispValue lf_add(LispValue args) {
+  if (!is_cons(args) || is_null(args))
+    return make_error(err_bad_arguments);
+  
+  LispValue x = eval(args.value.cons->car);
+  LispValue y = eval(args.value.cons->cdr);
+  
   if (is_error(x)) return x;
   if (is_error(y)) return y;
 
-  long xv = x.value.fixnum;
-  long yv = y.value.fixnum;
-
-  if (op[1] == 0) {
-    switch (op[0]) {
-    case '+': return make_fixnum(xv + yv);
-    case '-': return make_fixnum(xv - yv);
-    case '*': return make_fixnum(xv * yv);
-    case '/':
-      if (y.value.fixnum == 0)
-        return make_error(ERR_DIV_BY_ZERO);
-      else
-        return make_fixnum(xv / yv);
-    }
-  }
-
-  return make_error(ERR_BAD_OP);
+  if (!is_fixnum(x) || !is_fixnum(y))
+    return make_error(err_bad_arguments);
+  
+  return make_fixnum(x.value.fixnum + y.value.fixnum);
 }
 
-LispValue eval (mpc_ast_t *ast) {
+void cleanup_functions_table() {
+  hdestroy_r(&functions_table);
+}
+
+void add_function(char *name, LispFunction func) {
+  ENTRY ent = { name, func };
+  ENTRY *p_ent;
+  int result = hsearch_r(ent, ENTER, &p_ent, &functions_table);
+  ASSERT(result != 0, "Can't add function %s to hash table, errcode: %d\n", name, errno);
+}
+
+LispFunction lookup_function(char *name) {
+  ENTRY ent = { name, NULL };
+  ENTRY *p_ent;
+  int result = hsearch_r(ent, FIND, &p_ent, &functions_table);
+  if (result != 0)
+    return (LispFunction)p_ent->data;
+  return NULL;
+}
+
+void init_functions_table() {
+  hcreate_r(MAX_FUNCTIONS, &functions_table);
+  add_function("+", lf_add);
+}
+
+LispValue eval(LispValue lv) {
+  if (!is_cons(lv) || is_null(lv))
+    return lv;
+
+  LispValue car = lv.value.cons->car;
+  if (!is_symbol(car))
+    return make_error(err_func_is_not_a_symbol);
+  
+  LispFunction func = lookup_function(car.value.symbol);
+  if (!func)
+    return make_error(err_unknown_function);
+
+  return func(lv.value.cons->cdr);
+}
+
+LispValue read_lisp_value (mpc_ast_t *ast) {
   ASSERT(ast, "ast is null");
-    
+
+  //printf("Looking at tag: %s\n", ast->tag);
+  
+  // fixnum case
   if (strstr(ast->tag, "number")) {
     long val = strtol(ast->contents, NULL, 10);
     if (errno == ERANGE)
-      return make_error(ERR_RANGE);
+      return make_error(err_out_of_range);
     else
       return make_fixnum(val);
   }
 
-  ASSERT(ast->children_num > 2, "children number is too small");
+  // symbol case
+  if (strstr(ast->tag, "symbol"))
+    return make_symbol(ast->contents);
   
-  mpc_ast_t **children = ast->children;
-  char *op = children[1]->contents;
-  int max_idx = ast->children_num - 1;
-  LispValue result = eval(children[2]);
-  
-  for (int i = 3; i < max_idx; ++i)
-    result = eval_op(op, result, eval(children[i]));
+  // sexpr case
+  if (strstr(ast->tag, "sexpr")) {
+    mpc_ast_t **children = ast->children;
+    int children_num = ast->children_num;
+    
+    if (children_num <= 2)
+      return make_null();
 
-  return result;
+    LispValue result = read_lisp_value(children[children_num - 2]);
+    for (int i = children_num - 3; i > 0; --i) {
+      result = make_cons(read_lisp_value(children[i]), result);
+    }
+
+    return result;
+  }
+
+  return make_error(err_malformed_sexpr);
 }
 
 int main (int args, char *argv[]) {
   DEF_PARSER(number);
-  DEF_PARSER(operator);
+  DEF_PARSER(symbol);
+  DEF_PARSER(sexpr);
   DEF_PARSER(expr);
   DEF_PARSER(root);
 
   mpca_lang(MPCA_LANG_DEFAULT,
-            "number   : /-?[0-9]+/ ;                             \
-             operator : '+' | '-' | '*' | '/' ;                  \
-             expr     : <number> | '(' <operator> <expr> + ')' ; \
-             root     : /^/ <operator> <expr>+ /$/ ;",
-            number, operator, expr, root);
+            "number   : /-?[0-9]+/ ;                     \
+             symbol   : '+' | '-' | '*' | '/' ;          \
+             sexpr    : '(' <expr>* ')' ;                \
+             expr     : <number> | <symbol> | <sexpr> ;  \
+             root     : /^/ <expr> /$/ ;",
+            number, symbol, sexpr, expr, root);
+
+  init_functions_table();
 
   puts("Ba-bah scheme, C-c to exit\n");
+
   while (1) {
     char *input = readline("Ba-bah> ");
     add_history(input);
@@ -150,7 +274,12 @@ int main (int args, char *argv[]) {
     if (mpc_parse("<stdin>", input, root, &r)) {
       /* On Success Print the AST */
       //mpc_ast_print(r.output);
-      print_lisp_value(eval(r.output));
+      mpc_ast_t *ast = r.output;
+      ASSERT(ast->children_num > 1, "Malformed parsing result");
+      LispValue lv = eval(read_lisp_value(ast->children[1]));
+      print_lisp_value(lv);
+      printf("\n");
+      clean_lisp_value(lv);
       mpc_ast_delete(r.output);
     } else {
       /* Otherwise Print the Error */
@@ -161,14 +290,8 @@ int main (int args, char *argv[]) {
     free(input);
   }
 
-  mpc_cleanup(4, number, operator, expr, root);
+  mpc_cleanup(5, number, symbol, sexpr, expr, root);
+  cleanup_functions_table();
   
   return 0;
 }
-
-
-
-
-
-
-
