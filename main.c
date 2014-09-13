@@ -23,7 +23,7 @@ void error(char *file, int line, char *fmt, ...) {
 }
 
 static char* err_out_of_range = "Value out of range";
-//static char* err_division_by_zero = "Division by zero";
+static char* err_division_by_zero = "Division by zero";
 static char* err_unknown_function = "Unknown function";
 static char* err_malformed_sexpr = "Malformed s-expression";
 static char* err_func_is_not_a_symbol = "Function being called is not a symbol";
@@ -154,7 +154,9 @@ static struct hsearch_data functions_table;
 
 LispValue eval(LispValue lv);
 
-LispValue lf_add(LispValue args) {
+typedef LispValue (*ArithmeticFunction) (long, long);
+
+LispValue apply_arithmetic_function(LispValue args, ArithmeticFunction func) {
   if (!is_cons(args) || is_null(args))
     return make_error(err_bad_arguments);
   
@@ -166,9 +168,26 @@ LispValue lf_add(LispValue args) {
 
   if (!is_fixnum(x) || !is_fixnum(y))
     return make_error(err_bad_arguments);
-  
-  return make_fixnum(x.value.fixnum + y.value.fixnum);
+
+  return func(x.value.fixnum, y.value.fixnum);
 }
+
+LispValue af_add(long x, long y) { return make_fixnum(x + y); }
+LispValue af_sub(long x, long y) { return make_fixnum(x - y); }
+LispValue af_mul(long x, long y) { return make_fixnum(x * y); }
+LispValue af_div(long x, long y) {
+  if (y == 0)
+    return make_error(err_division_by_zero);
+  return make_fixnum(x / y);
+}
+
+#define DEFINE_LF_FOR_AF(lf, af) \
+  LispValue lf(LispValue args) { return apply_arithmetic_function(args, af); }
+
+DEFINE_LF_FOR_AF(lf_add, af_add)
+DEFINE_LF_FOR_AF(lf_sub, af_sub)
+DEFINE_LF_FOR_AF(lf_mul, af_mul)
+DEFINE_LF_FOR_AF(lf_div, af_div)
 
 void cleanup_functions_table() {
   hdestroy_r(&functions_table);
@@ -193,6 +212,9 @@ LispFunction lookup_function(char *name) {
 void init_functions_table() {
   hcreate_r(MAX_FUNCTIONS, &functions_table);
   add_function("+", lf_add);
+  add_function("-", lf_sub);
+  add_function("*", lf_mul);
+  add_function("/", lf_div);
 }
 
 LispValue eval(LispValue lv) {
