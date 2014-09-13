@@ -6,6 +6,8 @@
 
 #include "mpc/mpc.h"
 
+#define LISP_ERROR_MESSAGE_SIZE 256
+
 #define DEF_PARSER(name) mpc_parser_t* name = mpc_new( #name )
 #define ERROR(fmt, ...) error(__FILE__, __LINE__, (fmt), ##__VA_ARGS__)
 #define ASSERT(cond, fmt, ...)                \
@@ -21,13 +23,6 @@ void error(char *file, int line, char *fmt, ...) {
   va_end(va);
   exit(1);
 }
-
-static char* err_out_of_range = "Value out of range";
-static char* err_division_by_zero = "Division by zero";
-static char* err_unknown_function = "Unknown function";
-static char* err_malformed_sexpr = "Malformed s-expression";
-static char* err_func_is_not_a_symbol = "Function being called is not a symbol";
-static char* err_bad_arguments = "Bad arguemnts";
 
 enum {
   FIXNUM_TAG  = 0x0,
@@ -60,7 +55,13 @@ LispValue make_fixnum(long val) {
   return lv;
 }
 
-LispValue make_error(char *desc) {
+LispValue make_error(char *fmt, ...) {
+  char *desc = malloc(LISP_ERROR_MESSAGE_SIZE);
+  va_list va;
+  va_start(va, fmt);
+  vsnprintf(desc, LISP_ERROR_MESSAGE_SIZE, fmt, va);
+  va_end(va);
+
   LispValue lv;
   lv.tag = ERROR_TAG;
   lv.value.error = desc;
@@ -117,6 +118,8 @@ void clean_lisp_value(LispValue lv) {
       clean_lisp_value(cons->cdr);
       free(cons);
     }
+  } else if (is_error(lv)) {
+    free(lv.value.error);
   }
 }
 
@@ -158,7 +161,7 @@ typedef LispValue (*ArithmeticFunction) (long, long);
 
 LispValue apply_arithmetic_function(LispValue args, ArithmeticFunction func) {
   if (!is_cons(args) || is_null(args))
-    return make_error(err_bad_arguments);
+    return make_error("Function args is not a cons: %d", args.tag);
   
   LispValue x = eval(args.value.cons->car);
   LispValue y = eval(args.value.cons->cdr);
@@ -167,7 +170,7 @@ LispValue apply_arithmetic_function(LispValue args, ArithmeticFunction func) {
   if (is_error(y)) return y;
 
   if (!is_fixnum(x) || !is_fixnum(y))
-    return make_error(err_bad_arguments);
+    return make_error("Arithmetic function argument is not a fixnum");
 
   return func(x.value.fixnum, y.value.fixnum);
 }
@@ -177,7 +180,7 @@ LispValue af_sub(long x, long y) { return make_fixnum(x - y); }
 LispValue af_mul(long x, long y) { return make_fixnum(x * y); }
 LispValue af_div(long x, long y) {
   if (y == 0)
-    return make_error(err_division_by_zero);
+    return make_error("Division by zero");
   return make_fixnum(x / y);
 }
 
@@ -223,11 +226,11 @@ LispValue eval(LispValue lv) {
 
   LispValue car = lv.value.cons->car;
   if (!is_symbol(car))
-    return make_error(err_func_is_not_a_symbol);
+    return make_error("Function designator is not a symbol: %d", car.tag);
   
   LispFunction func = lookup_function(car.value.symbol);
   if (!func)
-    return make_error(err_unknown_function);
+    return make_error("Unknown function: %s", car.value.symbol);
 
   return func(lv.value.cons->cdr);
 }
@@ -241,7 +244,7 @@ LispValue read_lisp_value (mpc_ast_t *ast) {
   if (strstr(ast->tag, "number")) {
     long val = strtol(ast->contents, NULL, 10);
     if (errno == ERANGE)
-      return make_error(err_out_of_range);
+      return make_error("The value '%s' exceeds the range of fixnum values", ast->contents);
     else
       return make_fixnum(val);
   }
@@ -266,7 +269,7 @@ LispValue read_lisp_value (mpc_ast_t *ast) {
     return result;
   }
 
-  return make_error(err_malformed_sexpr);
+  return make_error("Can't read s-expr: %s - %s'", ast->tag, ast->contents);
 }
 
 int main (int args, char *argv[]) {
