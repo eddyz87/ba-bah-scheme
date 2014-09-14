@@ -48,6 +48,57 @@ typedef struct _Cons {
   LispValue cdr;
 } Cons;
 
+#define CONS_POOL_SIZE 1024
+
+typedef struct _ConsPool {
+  Cons conses[CONS_POOL_SIZE];
+  int free_index;
+  struct _ConsPool *next_pool;
+} ConsPool;
+
+typedef struct {
+  ConsPool *root;
+  ConsPool *current;
+} ConsAllocator;
+
+static ConsAllocator cons_allocator;
+
+ConsPool *new_cons_pool() {
+  return calloc(1, sizeof(ConsPool));
+}
+
+void init_cons_allocator() {
+  cons_allocator.root = cons_allocator.current = new_cons_pool();
+}
+
+void free_cons_pool(ConsPool *pool) {
+  while(pool) {
+    ConsPool *next = pool->next_pool;
+    free(pool);
+    pool = next;
+  }
+}
+
+void reset_cons_allocator() {
+  cons_allocator.root->free_index = 0;
+  free_cons_pool(cons_allocator.root->next_pool);
+}
+
+void cleanup_cons_allocator() {
+  free_cons_pool(cons_allocator.root);
+}
+
+Cons *new_cons() {
+  if (cons_allocator.current->free_index < CONS_POOL_SIZE) {
+    return &cons_allocator.current->conses[cons_allocator.current->free_index ++];
+  }
+  ConsPool *pool = new_cons_pool();
+  pool->free_index = 1;
+  cons_allocator.current->next_pool = pool;
+  cons_allocator.current = pool;
+  return &pool->conses[0];
+}
+
 LispValue make_fixnum(long val) {
   LispValue lv;
   lv.tag = FIXNUM_TAG;
@@ -78,7 +129,7 @@ LispValue make_symbol(char *name) {
 LispValue make_cons(LispValue car, LispValue cdr) {
   LispValue lv;
   lv.tag = CONS_TAG;
-  lv.value.cons = malloc(sizeof(Cons));
+  lv.value.cons = new_cons();
   lv.value.cons->car = car;
   lv.value.cons->cdr = cdr;
   return lv;
@@ -116,7 +167,7 @@ void clean_lisp_value(LispValue lv) {
     if (cons) {
       clean_lisp_value(cons->car);
       clean_lisp_value(cons->cdr);
-      free(cons);
+      //free(cons);
     }
   } else if (is_error(lv)) {
     free(lv.value.error);
@@ -195,7 +246,19 @@ DEFINE_LF_FOR_AF(lf_div, af_div)
 LispValue lf_quote(LispValue lv) {
   return lv;
 }
-  
+/*
+LispValue lf_car(LispValue lv) {
+}
+
+LispValue lf_cdr(LispValue lv) {
+}
+
+LispValue lf_cons(LispValue lv) {
+}
+
+LispValue lf_list(LispValue lv) {
+}
+*/
 void cleanup_functions_table() {
   hdestroy_r(&functions_table);
 }
@@ -293,6 +356,7 @@ int main (int args, char *argv[]) {
             number, symbol, sexpr, expr, root);
 
   init_functions_table();
+  init_cons_allocator();
 
   puts("Ba-bah scheme, C-c to exit\n");
 
@@ -302,17 +366,16 @@ int main (int args, char *argv[]) {
 
     mpc_result_t r;
     if (mpc_parse("<stdin>", input, root, &r)) {
-      /* On Success Print the AST */
-      mpc_ast_print(r.output);
+      //mpc_ast_print(r.output);
       mpc_ast_t *ast = r.output;
       ASSERT(ast->children_num > 1, "Malformed parsing result");
       LispValue lv = eval(read_lisp_value(ast->children[1]));
       print_lisp_value(lv);
       printf("\n");
       clean_lisp_value(lv);
+      reset_cons_allocator();
       mpc_ast_delete(r.output);
     } else {
-      /* Otherwise Print the Error */
       mpc_err_print(r.error);
       mpc_err_delete(r.error);
     }
@@ -322,6 +385,7 @@ int main (int args, char *argv[]) {
 
   mpc_cleanup(5, number, symbol, sexpr, expr, root);
   cleanup_functions_table();
+  cleanup_cons_allocator();
   
   return 0;
 }
