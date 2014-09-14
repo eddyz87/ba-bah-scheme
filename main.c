@@ -210,15 +210,33 @@ LispValue eval(LispValue lv);
 
 typedef LispValue (*ArithmeticFunction) (long, long);
 
+#define LASSERT_NOT_NULL(args)                        \
+  do {                                                \
+    if (is_null(args))                                \
+      return make_error("Function argument is null"); \
+  } while (0)
+
+#define LASSERT_ERROR(args) \
+  do {                      \
+    if (is_error(args))     \
+      return (args);        \
+  } while (0)
+
+#define LASSERT_CONS(args)                         \
+  do {                                             \
+    if (!is_cons(args))                            \
+      return make_error("Argument is not a cons"); \
+  } while (0)
+
 LispValue apply_arithmetic_function(LispValue args, ArithmeticFunction func) {
-  if (!is_cons(args) || is_null(args))
-    return make_error("Function args is not a cons: %d", args.tag);
+  LASSERT_NOT_NULL(args);
+  LASSERT_NOT_NULL(args.value.cons->cdr);
   
   LispValue x = eval(args.value.cons->car);
-  LispValue y = eval(args.value.cons->cdr);
-  
-  if (is_error(x)) return x;
-  if (is_error(y)) return y;
+  LispValue y = eval(args.value.cons->cdr.value.cons->car);
+
+  LASSERT_ERROR(x);
+  LASSERT_ERROR(y);
 
   if (!is_fixnum(x) || !is_fixnum(y))
     return make_error("Arithmetic function argument is not a fixnum");
@@ -243,22 +261,73 @@ DEFINE_LF_FOR_AF(lf_sub, af_sub)
 DEFINE_LF_FOR_AF(lf_mul, af_mul)
 DEFINE_LF_FOR_AF(lf_div, af_div)
 
-LispValue lf_quote(LispValue lv) {
-  return lv;
-}
-/*
-LispValue lf_car(LispValue lv) {
+LispValue lf_quote(LispValue args) {
+  return args;
 }
 
-LispValue lf_cdr(LispValue lv) {
+LispValue force_arguments(LispValue args) {
+  if (is_null(args))
+    return args;
+
+  LispValue x = eval(args.value.cons->car);
+  if (is_error(x))
+    return x;
+
+  return make_cons(x, force_arguments(args.value.cons->cdr));
 }
 
-LispValue lf_cons(LispValue lv) {
+LispValue nth_arg(LispValue args, int n) {
+  LASSERT_NOT_NULL(args);
+  while (n > 0) {
+    args = args.value.cons->cdr;
+    LASSERT_NOT_NULL(args);
+    n -= 1;
+  }
+  return args.value.cons->car;
 }
 
-LispValue lf_list(LispValue lv) {
+LispValue _lf_car_or_cdr(LispValue args, int car) {
+  args = force_arguments(args);
+  LASSERT_ERROR(args);
+  args = nth_arg(args, 0);
+  LASSERT_ERROR(args);
+  LASSERT_CONS(args);
+
+  if (is_null(args))
+    return make_null();
+
+  if (car) {
+    return args.value.cons->car;
+  } else {
+    return args.value.cons->cdr;
+  }
 }
-*/
+
+LispValue lf_car(LispValue args) {
+  return _lf_car_or_cdr(args, 1);
+}
+
+LispValue lf_cdr(LispValue args) {
+  return _lf_car_or_cdr(args, 0);
+}
+
+LispValue lf_list(LispValue args) {
+  return force_arguments(args);
+}
+
+LispValue lf_cons(LispValue args) {
+  args = force_arguments(args);
+  LASSERT_ERROR(args);
+
+  LispValue x = nth_arg(args, 0);
+  LASSERT_ERROR(x);
+
+  LispValue xs = nth_arg(args, 1);
+  LASSERT_ERROR(xs);
+
+  return make_cons(x, xs);
+}
+
 void cleanup_functions_table() {
   hdestroy_r(&functions_table);
 }
@@ -286,6 +355,10 @@ void init_functions_table() {
   add_function("*", lf_mul);
   add_function("/", lf_div);
   add_function("quote", lf_quote);
+  add_function("car", lf_car);
+  add_function("cdr", lf_cdr);
+  add_function("list", lf_list);
+  add_function("cons", lf_cons);
 }
 
 LispValue eval(LispValue lv) {
@@ -329,8 +402,8 @@ LispValue read_lisp_value (mpc_ast_t *ast) {
     if (children_num <= 2)
       return make_null();
 
-    LispValue result = read_lisp_value(children[children_num - 2]);
-    for (int i = children_num - 3; i > 0; --i) {
+    LispValue result = make_null();
+    for (int i = children_num - 2; i > 0; --i) {
       result = make_cons(read_lisp_value(children[i]), result);
     }
 
