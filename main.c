@@ -192,6 +192,10 @@ DEFINE_LF_FOR_AF(lf_sub, af_sub)
 DEFINE_LF_FOR_AF(lf_mul, af_mul)
 DEFINE_LF_FOR_AF(lf_div, af_div)
 
+LispValue lf_quote(LispValue lv) {
+  return lv;
+}
+  
 void cleanup_functions_table() {
   hdestroy_r(&functions_table);
 }
@@ -218,6 +222,7 @@ void init_functions_table() {
   add_function("-", lf_sub);
   add_function("*", lf_mul);
   add_function("/", lf_div);
+  add_function("quote", lf_quote);
 }
 
 LispValue eval(LispValue lv) {
@@ -280,11 +285,11 @@ int main (int args, char *argv[]) {
   DEF_PARSER(root);
 
   mpca_lang(MPCA_LANG_DEFAULT,
-            "number   : /-?[0-9]+/ ;                     \
-             symbol   : '+' | '-' | '*' | '/' ;          \
-             sexpr    : '(' <expr>* ')' ;                \
-             expr     : <number> | <symbol> | <sexpr> ;  \
-             root     : /^/ <expr> /$/ ;",
+            "number   : /-?[0-9]+/ ;"
+            "symbol   : /[a-zA-Z+\\-*\\/][a-zA-Z0-9+\\-*\\/]*/ ;"
+            "sexpr    : '(' <expr>* ')' ;"
+            "expr     : <number> | <symbol> | <sexpr> ;"
+            "root     : /^/ <expr> /$/ ;",
             number, symbol, sexpr, expr, root);
 
   init_functions_table();
@@ -298,7 +303,7 @@ int main (int args, char *argv[]) {
     mpc_result_t r;
     if (mpc_parse("<stdin>", input, root, &r)) {
       /* On Success Print the AST */
-      //mpc_ast_print(r.output);
+      mpc_ast_print(r.output);
       mpc_ast_t *ast = r.output;
       ASSERT(ast->children_num > 1, "Malformed parsing result");
       LispValue lv = eval(read_lisp_value(ast->children[1]));
