@@ -328,6 +328,16 @@ LispValue lf_cons(LispValue args) {
   return make_cons(x, xs);
 }
 
+LispValue lf_eval(LispValue args) {
+  args = force_arguments(args);
+  LASSERT_ERROR(args);
+  
+  LispValue x = nth_arg(args, 0);
+  LASSERT_ERROR(x);
+
+  return eval(x);
+}
+
 void cleanup_functions_table() {
   hdestroy_r(&functions_table);
 }
@@ -359,6 +369,7 @@ void init_functions_table() {
   add_function("cdr", lf_cdr);
   add_function("list", lf_list);
   add_function("cons", lf_cons);
+  add_function("eval", lf_eval);
 }
 
 LispValue eval(LispValue lv) {
