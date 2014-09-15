@@ -6,6 +6,7 @@
 
 #include "mpc/mpc.h"
 #include "utils.h"
+#include "lisp_types.h"
 
 /**
    Lisp symbols table:
@@ -22,33 +23,7 @@
      sorts this array, evaluates body with newly created environment
  */
 
-#define LISP_ERROR_MESSAGE_SIZE 256
-
 #define DEF_PARSER(name) mpc_parser_t* name = mpc_new( #name )
-
-enum {
-  FIXNUM_TAG  = 0x0,
-  ERROR_TAG   = 0x1,
-  CONS_TAG    = 0x2,
-  SYMBOL_TAG  = 0x3,
-};
-
-struct _Cons;
-
-typedef struct {
-  unsigned int tag:2;
-  union {
-    long fixnum;
-    char* error;
-    char* symbol;
-    struct _Cons *cons;
-  } value;
-} LispValue;
-
-typedef struct _Cons {
-  LispValue car;
-  LispValue cdr;
-} Cons;
 
 #define CONS_POOL_SIZE 1024
 
@@ -99,68 +74,6 @@ Cons *new_cons() {
   cons_allocator.current->next_pool = pool;
   cons_allocator.current = pool;
   return &pool->conses[0];
-}
-
-LispValue make_fixnum(long val) {
-  LispValue lv;
-  lv.tag = FIXNUM_TAG;
-  lv.value.fixnum = val;
-  return lv;
-}
-
-LispValue make_error(char *fmt, ...) {
-  char *desc = malloc(LISP_ERROR_MESSAGE_SIZE);
-  va_list va;
-  va_start(va, fmt);
-  vsnprintf(desc, LISP_ERROR_MESSAGE_SIZE, fmt, va);
-  va_end(va);
-
-  LispValue lv;
-  lv.tag = ERROR_TAG;
-  lv.value.error = desc;
-  return lv;
-}
-
-LispValue make_symbol(char *name) {
-  LispValue lv;
-  lv.tag = SYMBOL_TAG;
-  lv.value.symbol = name;
-  return lv;
-}
-
-LispValue make_cons(LispValue car, LispValue cdr) {
-  LispValue lv;
-  lv.tag = CONS_TAG;
-  lv.value.cons = new_cons();
-  lv.value.cons->car = car;
-  lv.value.cons->cdr = cdr;
-  return lv;
-}
-
-LispValue make_null() {
-  LispValue lv;
-  lv.tag = CONS_TAG;
-  lv.value.cons = NULL;
-  return lv;
-}
-
-int check_tag(LispValue lv, int tag) {
-  return lv.tag == tag;
-}
-
-
-#define DEF_TAG_CHECK(func, tag) \
-  int func(LispValue lv) {       \
-    return check_tag(lv, (tag)); \
-  }
-
-DEF_TAG_CHECK(is_error  , ERROR_TAG)
-DEF_TAG_CHECK(is_fixnum , FIXNUM_TAG)
-DEF_TAG_CHECK(is_cons   , CONS_TAG)
-DEF_TAG_CHECK(is_symbol , SYMBOL_TAG)
-
-int is_null(LispValue lv) {
-  return is_cons(lv) && !lv.value.cons;
 }
 
 void clean_lisp_value(LispValue lv) {
