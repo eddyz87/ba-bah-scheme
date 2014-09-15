@@ -5,24 +5,26 @@
 #include <search.h>
 
 #include "mpc/mpc.h"
+#include "utils.h"
+
+/**
+   Lisp symbols table:
+     a pool of string pointers, feeled during read
+     (and intern function, if im going to add one)
+     
+   Lisp environment:
+     sorted (qsort) array of pairs (symbol*, LispValue)
+     + size of this array
+     + pointer to parent environment
+
+   New environments are introduced by 'let' form:
+     allocates array of (symbol*, value) pairs
+     sorts this array, evaluates body with newly created environment
+ */
 
 #define LISP_ERROR_MESSAGE_SIZE 256
 
 #define DEF_PARSER(name) mpc_parser_t* name = mpc_new( #name )
-#define ERROR(fmt, ...) error(__FILE__, __LINE__, (fmt), ##__VA_ARGS__)
-#define ASSERT(cond, fmt, ...)                \
-  do {                                        \
-    if (!(cond)) { ERROR(fmt, ##__VA_ARGS__); } \
-  } while(0)
-
-void error(char *file, int line, char *fmt, ...) {
-  fprintf(stderr, "Error at %s:%d : ", file, line);
-  va_list va;
-  va_start(va, fmt);
-  vfprintf(stderr, fmt, va);
-  va_end(va);
-  exit(1);
-}
 
 enum {
   FIXNUM_TAG  = 0x0,
