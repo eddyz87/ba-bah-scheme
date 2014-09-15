@@ -29,7 +29,7 @@ LispValue make_error(char *fmt, ...) {
 LispValue make_symbol(char *name) {
   LispValue lv;
   lv.tag = SYMBOL_TAG;
-  lv.value.symbol = name;
+  lv.value.symbol = intern_symbol(name);
   return lv;
 }
 

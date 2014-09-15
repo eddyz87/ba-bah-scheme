@@ -8,6 +8,8 @@ enum {
   SYMBOL_TAG  = 0x3,
 };
 
+typedef char* Symbol;
+
 struct _Cons;
 
 typedef struct {
@@ -15,7 +17,7 @@ typedef struct {
   union {
     long fixnum;
     char* error;
-    char* symbol;
+    Symbol symbol;
     struct _Cons *cons;
   } value;
 } LispValue;
@@ -25,6 +27,7 @@ typedef struct _Cons {
   LispValue cdr;
 } Cons;
 
+Symbol intern_symbol(char*);
 Cons *new_cons();
 LispValue make_fixnum(long val);
 LispValue make_error(char *fmt, ...);

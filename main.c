@@ -8,6 +8,7 @@
 #include "utils.h"
 #include "lisp_types.h"
 #include "cons_pool.h"
+#include "symbols.h"
 
 /**
    Lisp symbols table:
@@ -306,6 +307,7 @@ int main (int args, char *argv[]) {
 
   init_functions_table();
   init_cons_allocator();
+  init_symbols_table();
 
   puts("Ba-bah scheme, C-c to exit\n");
 
@@ -323,6 +325,7 @@ int main (int args, char *argv[]) {
       printf("\n");
       clean_lisp_value(lv);
       reset_cons_allocator();
+      reset_symbols_table();
       mpc_ast_delete(r.output);
     } else {
       mpc_err_print(r.error);
@@ -335,6 +338,7 @@ int main (int args, char *argv[]) {
   mpc_cleanup(5, number, symbol, sexpr, expr, root);
   cleanup_functions_table();
   cleanup_cons_allocator();
+  cleanup_symbols_table();
   
   return 0;
 }
