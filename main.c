@@ -25,6 +25,24 @@
      sorts this array, evaluates body with newly created environment
  */
 
+typedef struct {
+  Symbol symbol;
+  LispValue value;
+} Binding;
+
+typedef struct _Environment {
+  struct _Environment *parent;
+  int size;
+  Binding bindings[0];
+} Environment;
+
+Environment *make_environment(Environment *parent, int size) {
+  Environment *env = malloc(sizeof(Environment) + size*sizeof(Binding));
+  env->parent = parent;
+  env->size = size;
+  return env;
+}
+
 #define DEF_PARSER(name) mpc_parser_t* name = mpc_new( #name )
 
 void clean_lisp_value(LispValue lv) {
@@ -92,6 +110,12 @@ typedef LispValue (*ArithmeticFunction) (long, long);
   do {                                             \
     if (!is_cons(args))                            \
       return make_error("Argument is not a cons"); \
+  } while (0)
+
+#define LASSERT_SYMBOL(args)                         \
+  do {                                               \
+    if (!is_symbol(args))                            \
+      return make_error("Argument is not a symbol"); \
   } while (0)
 
 LispValue apply_arithmetic_function(LispValue args, ArithmeticFunction func) {
@@ -202,6 +226,57 @@ LispValue lf_eval(LispValue args) {
   LASSERT_ERROR(x);
 
   return eval(x);
+}
+
+int compare_bindings(const void *x, const void *y) {
+  Symbol a = ((Binding*)x)->symbol;
+  Symbol b = ((Binding*)y)->symbol;
+  
+  if (a > b)
+    return 1;
+  if (a < b)
+    return -1;
+  return 0;
+}
+
+LispValue lf_let(LispValue args, Environment *env) {
+  LispValue vars = args.value.cons->car;
+  LispValue forms = args.value.cons->cdr;
+
+  LASSERT_CONS(vars);
+
+  int vars_count = 0;
+  for (LispValue lv = vars; !is_null(lv); lv = lv.value.cons->cdr) {
+    LispValue binding = lv.value.cons->car;
+    LASSERT_CONS(binding);
+    LASSERT_NOT_NULL(binding);
+    LASSERT_NOT_NULL(binding.value.cons->cdr);
+    LASSERT_CONS(binding.value.cons->cdr);
+    LASSERT_SYMBOL(binding.value.cons->car);
+    ++vars_count;
+  }
+
+  Environment *new_env = (vars_count > 0) ? make_environment(env, vars_count) : env;
+  if (vars_count) {
+    int index = 0;
+    for (LispValue lv = vars; !is_null(lv); lv = lv.value.cons->cdr) {
+      LispValue binding = lv.value.cons->car;
+      new_env->bindings[index].symbol = binding.value.cons->car.value.symbol;
+      new_env->bindings[index].value = eval(nth_arg(binding, 1));
+      ++index;
+    }
+    qsort(new_env->bindings, new_env->size, sizeof(Binding), compare_bindings);
+  }
+
+  LispValue result = make_null();
+  for (LispValue lv = forms; !is_null(lv); lv = lv.value.cons->cdr) {
+    result = eval(lv.value.cons->car);
+  }
+  
+  if (new_env != env)
+    free(new_env);
+
+  return result;
 }
 
 void cleanup_functions_table() {
